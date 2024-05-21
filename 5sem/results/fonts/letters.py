@@ -1,27 +1,58 @@
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 import numpy as np
+from math import ceil
 
+ugaritic_unicode = ["10380", "10381", "10382", "10383", "10384", "10385", "10386", "10387", "10388",
+                    "10389", "1038A", "1038B", "1038C", "1038D", "1038E", "1038F", "10390", "10391",
+                    "10392", "10393", "10394", "10395", "10396", "10397", "10398", "10399", "1039A",
+                    "1039B", "1039C", "1039D"]
 
-def binarization(img, threshold = 100):
-    img_arr = np.array(img)
-    bin_img = np.zeros(shape=img_arr.shape)
-    bin_img[img_arr > threshold] = 255
-    res = Image.fromarray(bin_img.astype(np.uint8), 'L')
-    return res
+ugaritic_letters = [chr(int(letter, 16)) for letter in ugaritic_unicode]
 
+def find_first_nonzero(ar):
+    return np.min(np.nonzero(ar))
 
-def main():
-    letters = "𐎀𐎁𐎂𐎃𐎄𐎅𐎆𐎇𐎈𐎉𐎊𐎋𐎌𐎍𐎎𐎏𐎐𐎑𐎒𐎓𐎔𐎕𐎖𐎗𐎘𐎙𐎚𐎛𐎜𐎝"
-    font = ImageFont.truetype("NotoSansUgaritic-Regular.ttf", 100)
+def find_last_nonzero(ar):
+    return np.max(np.nonzero(ar)) + 1
+
+def find_first_last_non_zero(ar):
+    return find_first_nonzero(ar), find_last_nonzero(ar)
+
+def convert_to_bd_image(image):
+    image = np.array(image)
+    return 1 - image / 255
+
+def calc_horizontal_profile(image):
+    return convert_to_bd_image(image).sum(axis=1)
+
+def calc_vertical_profile(image):
+    return convert_to_bd_image(image).sum(axis=0)
+
+def calc_profiles(image):
+    return calc_horizontal_profile(image), calc_vertical_profile(image)
+
+def generate_font_images(font_path, font_size):
+    letters = ugaritic_letters
+    font = ImageFont.truetype(font_path, font_size)
 
     for letter in letters:
-        _, _, width, height = font.getbbox(letter) 
+        _, _, width, height = font.getbbox(letter)
 
-        img = Image.new("L", (width, height), color="white")
-        draw = ImageDraw.Draw(img)
+        image = Image.new("L", (width, height), color="white")
+        draw = ImageDraw.Draw(image)
         draw.text((0, 0), letter, font=font, color="black")
-        res = binarization(img)
-        res.save(f"letters/{letter}.png")
+
+        horizontal_profile, vertical_profile = calc_profiles(image)
+
+        upper, lower = find_first_last_non_zero(horizontal_profile)
+        left, right = find_first_last_non_zero(vertical_profile)
+
+        cropped_letter = image.crop((left, upper, right, lower))
+
+        cropped_letter.save(f"letters/{letter}.bmp")
+
+def main():
+    generate_font_images("NotoSansUgaritic-Regular.ttf", 100)
 
 if __name__ == '__main__':
     main()

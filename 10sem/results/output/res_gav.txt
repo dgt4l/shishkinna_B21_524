@@ -1,0 +1,5 @@
+gav
+Max frequency: 20062.5
+Min freq: 0.0
+Maintone: 1130
+Strongest formants: [1500.0, 2812.5, 3187.5]

@@ -1,198 +1,262 @@
 from PIL import Image, ImageFont, ImageDraw
 import numpy as np
 import csv
-from math import sqrt
+import math
+import pandas as pd
 import matplotlib.pyplot as plt
+from functools import reduce
 
 
-def binarization(img, threshold = 100):
-    img_arr = np.array(img)
-    bin_img = np.zeros(shape=img_arr.shape)
-    bin_img[img_arr > threshold] = 255
-    res = Image.fromarray(bin_img.astype(np.uint8), 'L')
-    return res
+def blackened(image):
+    image = np.array(image)
+    return 1 - image / 255
 
-def generate_phrase():
-    letters = "𐎀𐎁𐎂𐎃𐎄𐎅𐎆𐎇𐎈"
-    font = ImageFont.truetype("NotoSansUgaritic-Regular.ttf", 100)
-    _, _, width, height = font.getbbox(letters)
-    img = Image.new("L", (width, height), color="white")
-    draw = ImageDraw.Draw(img)
-    draw.text((0, 0), letters, font=font, color="black")
-    res = binarization(img)
-    res.save(f"output/sentence.png")
+def first_nonzero(ar):
+    return np.min(np.nonzero(ar))
 
-def black_white(img):
-    return np.asarray(np.asarray(img) < 1, dtype=np.uint8)
+def last_nonzero(ar):
+    return np.max(np.nonzero(ar)) + 1
 
-def calculate_segments(img):
-    img_arr = black_white(img)
-    x_profiles = np.sum(img_arr, axis=0)
-    lst = [] 
-    new_lst = []  
-    for i in range(len(x_profiles)):   
-        if x_profiles[i] == 0:
-            lst.append(i)
-    lst.append(img.width)  
+def first_last_non_zero(ar):
+    return first_nonzero(ar), last_nonzero(ar)
 
-    for i in range(len(lst)-1):
-        if lst[i] + 1 != lst[i+1]:
-            new_lst.append(lst[i])
-            new_lst.append(lst[i+1])
-    new_lst.append(img.width-1)
-    new_lst = sorted(list(set(new_lst))) 
+def horizontal_profile(image):
+    return blackened(image).sum(axis=1)
+
+def vertical_profile(image):
+    return blackened(image).sum(axis=0)
+
+def profiles(image):
+    return horizontal_profile(image), vertical_profile(image)
+
+def generate_sentence(sentence, input_path, font_size, number):
+    font = ImageFont.truetype(input_path, font_size)
+
+    width = reduce(
+        lambda acc, curr: acc + curr,
+        map(lambda symbol: font.getbbox(symbol)[2], sentence), 0)
+
+    height = max(map(lambda symbol: font.getbbox(symbol)[3], sentence))
+
+    image = Image.new("L", (width + 20, height + 20), color="white")
+    draw = ImageDraw.Draw(image)
+    draw.text((10, 10), sentence, font=font, color="black")
+    image.save(f"output/sentence_{number}.bmp")
+
+def find_letter_ranges(y_profile, horizontal_border):
+    ranges = []
+
+    left = 0
+
+    while left < y_profile.size:
+        while left < y_profile.size and y_profile[left] == 0:
+            left  += 1
+
+        right = left 
+
+        while right < y_profile.size and y_profile[right] != 0:
+            right += 1
+        if (left != right):
+            ranges.append((left, right))
+        left = right
+
+    whitespace_ranges = []
+    for symbol_range in ranges:
+        if len(whitespace_ranges) == 0:
+            whitespace_ranges.append(symbol_range)
+            continue
+        if (symbol_range[0] - whitespace_ranges[-1][1] < horizontal_border):
+            whitespace_ranges[-1] = (whitespace_ranges[-1][0], symbol_range[1])
+        else:
+            whitespace_ranges.append(symbol_range)
     
-    segments = []
-    for i in range(0, len(new_lst)-1, 2):
-        segments.append((new_lst[i], new_lst[i+1]))
+    return whitespace_ranges
+
+def borders_from_ranges(image, ranges):
+    borders = []
+    _, height = image.size
+
+    for i, letter_range in enumerate(ranges):
+        left, right = letter_range
+        symbol = image.crop((left, 0, right, height))
+
+        x_profile = horizontal_profile(symbol)
+
+        width, _ = symbol.size
+        lower, upper = first_last_non_zero(x_profile)
+        symbol = symbol.crop((0, lower, width, upper))
+
+        borders.append((left, lower, right, upper))
+
+    return borders
+
+def get_segments(image, x_border):
+    _, y_profile = profiles(image)
+    
+    ranges = find_letter_ranges(y_profile, x_border)
+    segments = borders_from_ranges(image, ranges)
+
     return segments
 
-def draw_segments():
-    img = Image.open("output/sentence.png").convert('L')
-    segments = calculate_segments(img)
-    for i, segment in enumerate(segments):
-        box = (segment[0], 0, segment[1] + 1, img.height)
-        res = img.crop(box)
-        res.save(f"output/letters/{i + 1}.png")
+def calc_black_weight(img_arr):
+    return np.sum(img_arr)
 
-def black_white(img):
-    return np.asarray(np.asarray(img) < 1, dtype=np.uint8)
+def calc_rel_black_weight(img_arr):
+    return calc_black_weight(img_arr) / img_arr.size
 
-def calculate_black_weight(img_arr):
+def calc_center(img_arr):
     height, width = img_arr.shape
-    weight = 0
 
-    for x in range(width):
-        for y in range(height):
-            if img_arr[y, x] == 0:
-                weight += 1
+    black_weight = calc_black_weight(img_arr)
 
-    return weight, weight / img_arr.size
+    center_x = (np.sum(img_arr, axis=1) @ np.array(range(height))) / black_weight
+    center_y = (np.sum(img_arr, axis=0) @ np.array(range(width))) / black_weight
 
-def calculate_center(img_arr):
+    return center_x, center_y
+
+def calc_rel_center(img_arr):
     height, width = img_arr.shape
-    x_coord, y_coord = 0, 0
 
-    for x in range(width):
-        for y in range(height):
-            if img_arr[y, x] == 0:
-                x_coord += x
-                y_coord += y
+    center_x, center_y = calc_center(img_arr)
 
-    x_center = x_coord / img_arr.size
-    y_center = y_coord / img_arr.size
+    return (center_x - 1) / (height - 1), (center_y - 1) / (width - 1)
 
-    return (x_center, y_center), (x_center / width, y_center / height)
+def calc_x_inertia(img_arr):
+    _, width = img_arr.shape
+    _, y_center = calc_center(img_arr)
 
-def calculate_moments_of_inertia(img_arr, x_center, y_center):
+    return np.sum((np.array(range(width)) - y_center)**2 @ np.transpose(img_arr))
+
+def calc_y_inertia(img_arr):
+    height, _ = img_arr.shape
+    x_center, _ = calc_center(img_arr)
+    return np.sum((np.array(range(height)) - x_center)**2 @ img_arr)
+
+def calc_rel_x_inertia(img_arr):
     height, width = img_arr.shape
-    x_inertia, y_inertia = 0, 0
 
-    for x in range(width):
-        for y in range(height):
-            x_inertia = (y - y_center) ** 2
-            y_inertia = (x - x_center) ** 2
+    return calc_x_inertia(img_arr) / (height**2 * width**2)
 
-    x_inertia_norm = x_inertia / (width ** 2 * height ** 2)
-    y_inertia_norm = y_inertia / (width ** 2 * height ** 2)
+def calc_rel_y_inertia(img_arr):
+    height, width = img_arr.shape
 
-    return (x_inertia, y_inertia), (x_inertia_norm, y_inertia_norm)
+    return calc_y_inertia(img_arr) / (height**2 * width**2)
 
-def get_profiles(img):
-    img_arr = black_white(img)
-    return {
-            'x': np.sum(img_arr, axis=0),
-            'x_r': np.arange(start=1, stop=img_arr.shape[1] + 1).astype(int),
-            'y_r': np.arange(start=1, stop=img_arr.shape[0] + 1).astype(int),
-            'y': np.sum(img_arr, axis=1)
-        }
+def create_features(letters):
+    report = {
+        "Symbol": [],
+        "Black Mass": [],
+        "Center of Gravity, X": [],
+        "Center of Gravity, Y": [],
+        "Horizontal Moment of Inertia": [],
+        "Vertical Moment of Inertia": [],
 
-def write_profiles(img, output_path, type='x'):
-    profiles = get_profiles(img)
-    
-    if type == 'x':
-        plt.bar(x=profiles['x_r'], height=profiles['x'], width=0.9)
-        plt.ylim(0, 60)
-    
-    else:
-        plt.barh(y=profiles['y_r'], width=profiles['y'], height=0.9)
-        plt.ylim(60, 0)
-
-    plt.savefig(output_path)
-    plt.clf()
-    
-def save_profiles():
-    letters = "𐎀𐎁𐎂𐎃𐎄𐎅𐎆𐎇𐎈𐎉𐎊𐎋𐎌𐎍𐎎𐎏𐎐𐎑𐎒𐎓𐎔𐎕𐎖𐎗𐎘𐎙𐎚𐎛𐎜𐎝"
-    for letter in letters:
-        img = Image.open(f"fonts/letters/{letter}.png")
-        x_path = f"profiles/{letter}_x.png"
-        y_path = f"profiles/{letter}_y.png"
-        write_profiles(img, x_path, 'x')
-        write_profiles(img, y_path, 'y')
-
-def get_data(img):
-    img_arr = np.array(img).astype(np.uint8)
-
-    weight, norm_weight = calculate_black_weight(img_arr)
-    center, norm_center = calculate_center(img_arr)
-    inertia, norm_inertia = calculate_moments_of_inertia(img_arr, center[0], center[1])
-
-    return {
-        'weight': weight,
-        'rel_weight': norm_weight,
-        'center': center,
-        'rel_center': norm_center,
-        'inertia': inertia,
-        'rel_inertia': norm_inertia
     }
 
-def load_data_from_csv(path):
-    with open(path, 'r', newline='', encoding='utf-8') as file:
-        reader = csv.DictReader(file)
+    for letter in letters:
+        img = Image.open(f"../../5sem/results/fonts/letters/{letter}.bmp")
+        b_img = blackened(img)
 
-        result = {}
-        for row in reader:
-            result[row['letter']] = {
-                'rel_weight': float(row['rel_weight']), 
-                'rel_center': tuple(map(float, row['rel_center'][1:len(row['rel_center'])-1].split(', '))),
-                'rel_inertia': tuple(map(float, row['rel_inertia'][1:len(row['rel_inertia'])-1].split(', ')))
-            }
-        return result
+        x_center, y_center = calc_rel_center(b_img)
 
-def calculate_distance(data1, data2):
-    distance = sqrt(data1['rel_weight'] - data2['rel_weight']**2 +
-        (data1['rel_center'][0] - data2['rel_center'][0])**2 +
-        (data1['rel_center'][1] - data2['rel_center'][1])**2 +
-        (data1['rel_inertia'][0] - data2['rel_inertia'][0])**2 +
-        (data1['rel_inertia'][1] - data2['rel_inertia'][1])**2
-    )
+        report["Symbol"].append(letter)
+        report["Black Mass"].append(calc_rel_black_weight(b_img))
+        report["Center of Gravity, X"].append(x_center)
+        report["Center of Gravity, Y"].append(y_center)
+        report["Horizontal Moment of Inertia"].append(calc_rel_x_inertia(b_img))
+        report["Vertical Moment of Inertia"].append(calc_rel_y_inertia(b_img))
+    
+    df = pd.DataFrame(report)
 
-    return distance
+    return df
 
-def calculate_all_distances(letters_data, sentence_data):
-    result = {}
-    for letter, data in letters_data.items():
-        result[letter] = calculate_distance(sentence_data, data)
+def normalize(value, params):
+    col_min, col_max = params
+    return (value - col_min) / (col_max - col_min)
 
-    _max = max(result.values())
+def normalize_features(features):
+    normalized_features = features.copy()
 
-    new_result = {}
-    for letter, distance in result.items():
-        new_result[letter] = (_max - distance) / _max
+    feature_to_norm_params = dict()
 
-    return new_result
+    for column in normalized_features:
+        if column == "Symbol":
+            continue
 
+        col_min = normalized_features[column].min()
+        col_max = normalized_features[column].max()
+
+        feature_to_norm_params[column] = col_min, col_max
+
+        normalized_features[column] = (normalized_features[column] - col_min) / (col_max - col_min)
+    
+    return normalized_features, feature_to_norm_params
+
+def recognite_letter(b_letter, feature_matrix, norm_params, letters):
+    x_center, y_center = calc_rel_center(b_letter)
+
+    letter_features = np.array([
+        normalize(calc_rel_black_weight(b_letter), norm_params["Black Mass"]),
+        normalize(x_center, norm_params["Center of Gravity, X"]),
+        normalize(y_center, norm_params["Center of Gravity, Y"]),
+        normalize(calc_rel_x_inertia(b_letter), norm_params["Horizontal Moment of Inertia"]),
+        normalize(calc_rel_y_inertia(b_letter), norm_params["Vertical Moment of Inertia"]),
+    ])
+
+    distances = np.sqrt(np.sum((feature_matrix - letter_features)**2, axis=1))
+    probs = np.exp(-distances)
+
+    result = []
+
+    for i, letter in enumerate(letters):
+        result.append((letter, probs[i]))
+
+    return sorted(result, key=lambda x: -x[1])
+
+def to_matrix():
+    ugaritic_letters = "𐎀𐎁𐎂𐎃𐎄𐎅𐎆𐎇𐎈𐎉𐎊𐎋𐎌𐎍𐎎𐎏𐎐𐎑𐎒𐎓𐎔𐎕𐎖𐎗𐎘𐎙𐎚𐎛𐎜𐎝"
+    features = create_features(ugaritic_letters)
+    norm_features, norm_params = normalize_features(features)
+    numeric_features = [
+        "Black Mass",
+        "Center of Gravity, X",
+        "Center of Gravity, Y",
+        "Horizontal Moment of Inertia",
+        "Vertical Moment of Inertia"]
+
+    feature_matrix = norm_features[numeric_features].to_numpy()
+    return feature_matrix, norm_params
+
+def sentence_recognition(sentence, flag, size):
+
+    generate_sentence(sentence, "NotoSansUgaritic-Regular.ttf", size, flag)
+    
+    ugaritic_letters = "𐎀𐎁𐎂𐎃𐎄𐎅𐎆𐎇𐎈𐎉𐎊𐎋𐎌𐎍𐎎𐎏𐎐𐎑𐎒𐎓𐎔𐎕𐎖𐎗𐎘𐎙𐎚𐎛𐎜𐎝"
+    image = Image.open(f"output/sentence_{flag}.bmp").convert("L")
+    new_image = blackened(image)
+    borders = get_segments(image, 4)
+    recognited = []
+    feature_data, norm_data = to_matrix()
+    for border in borders:
+        left, lower, right, upper = border
+        black_letter = new_image[lower:upper, left:right]
+        recognited.append(
+            recognite_letter(black_letter, feature_data, norm_data, ugaritic_letters))
+    
+    sentence.replace(" ", "")
+    recognited_sentence = ''.join(letter[0][0] + " " for letter in recognited)
+    with open(f"output/result_{flag}.txt", "w") as f:
+        for i, recognitions in enumerate(recognited):
+            f.write(f"{i+1}: {recognitions}\n")
+
+    print(f"{recognited_sentence}, {len(sentence)} : {len(recognited_sentence) // 2}")
 
 def main():
-    # generate_phrase()
-    # draw_segments()
-    results = load_data_from_csv("letters.csv")
-    img = Image.open("output/letters/1.png")
-    data = get_data(img)
-    # print(data)
-    # print(results["𐎁"])
-    result = calculate_all_distances(results, data)
-    print(result)
+    sentences = ["𐎀𐎁𐎂𐎃𐎄𐎅𐎆𐎇𐎈𐎊", "𐎖𐎗𐎘𐎙𐎚𐎛𐎜𐎝", "𐎀𐎁𐎂𐎃𐎄𐎅𐎆𐎇𐎈𐎉𐎊𐎋𐎌𐎍𐎎𐎏𐎐𐎑𐎒𐎓𐎔𐎕𐎖𐎗𐎘𐎙𐎚𐎛𐎜𐎝"]
+    for i, sentence in enumerate(sentences):
+        size = 50
+        sentence_recognition(sentence, i+1, size)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
+    

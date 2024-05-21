@@ -1,0 +1,5 @@
+i
+Max frequency: 20015.625
+Min freq: 0.0
+Maintone: 1013
+Strongest formants: [562.5, 3187.5, 1687.5]
