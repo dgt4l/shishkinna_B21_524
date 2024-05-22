@@ -242,7 +242,7 @@ def sentence_recognition(sentence, flag, size):
         black_letter = new_image[lower:upper, left:right]
         recognited.append(
             recognite_letter(black_letter, feature_data, norm_data, ugaritic_letters))
-    
+
     sentence.replace(" ", "")
     recognited_sentence = ''.join(letter[0][0] + " " for letter in recognited)
     with open(f"output/result_{flag}.txt", "w") as f:
@@ -252,7 +252,7 @@ def sentence_recognition(sentence, flag, size):
     print(f"{recognited_sentence}, {len(sentence)} : {len(recognited_sentence) // 2}")
 
 def main():
-    sentences = ["𐎀𐎁𐎂𐎃𐎄𐎅𐎆𐎇𐎈𐎊", "𐎖𐎗𐎘𐎙𐎚𐎛𐎜𐎝", "𐎀𐎁𐎂𐎃𐎄𐎅𐎆𐎇𐎈𐎉𐎊𐎋𐎌𐎍𐎎𐎏𐎐𐎑𐎒𐎓𐎔𐎕𐎖𐎗𐎘𐎙𐎚𐎛𐎜𐎝"]
+    sentences = ["𐎀𐎁𐎂𐎃𐎄𐎅𐎆𐎇𐎈𐎊", "𐎖𐎗𐎘𐎙𐎚𐎛𐎜𐎝", "𐎀𐎁𐎂𐎃𐎄𐎅𐎆𐎇𐎈𐎉𐎊𐎋𐎌𐎍𐎎𐎏𐎐𐎑𐎒𐎓𐎔𐎕𐎖𐎗mm𐎘𐎙𐎚𐎛𐎜𐎝"]
     for i, sentence in enumerate(sentences):
         size = 50
         sentence_recognition(sentence, i+1, size)
